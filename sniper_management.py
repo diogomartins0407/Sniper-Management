@@ -294,6 +294,55 @@ if not df_trades.empty:
         )
     else: st.info("Nenhuma posição aberta.")
 
+# --- MATRIZ DE PERFORMANCE COM REVELAÇÃO PROGRESSIVA ---
+    st.subheader("📊 Matriz de Performance")
+    
+    # 🔘 Seletor de Nível de Detalhe
+    modo_visao = st.radio(
+        "Nível de Detalhe:",
+        ["Resumido (Apenas %)", "Detalhado (Trades | WR)"],
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+
+    if not vendas_hist.empty:
+        df_m = vendas_hist.copy()
+        df_m['Ano'] = df_m['Data'].dt.year
+        df_m['Mês_Num'] = df_m['Data'].dt.month
+        
+        res_mensal = df_m.groupby(['Ano', 'Mês_Num']).agg(
+            Lucro_Total=('Resultado_R$', 'sum'),
+            Total_Trades=('ID', 'count'),
+            Wins=('Resultado_R$', lambda x: (x > 0).sum())
+        ).reset_index()
+        
+        res_mensal['WinRate'] = (res_mensal['Wins'] / res_mensal['Total_Trades']) * 100
+        res_mensal['Retorno_%'] = (res_mensal['Lucro_Total'] / CAPITAL_INICIAL) * 100
+        
+        # 🪄 LÓGICA DE EXIBIÇÃO DINÂMICA
+        if modo_visao == "Resumido (Apenas %)":
+            res_mensal['Display'] = res_mensal['Retorno_%'].apply(lambda x: f"{x:.2f}%")
+        else:
+            res_mensal['Display'] = res_mensal.apply(
+                lambda x: f"{x['Retorno_%']:.2f}% \n ({int(x['Total_Trades'])}t | {x['WinRate']:.0f}%)", axis=1
+            )
+        
+        pivot_retorno = res_mensal.pivot(index='Ano', columns='Mês_Num', values='Display')
+        meses_nomes = {1:'Jan', 2:'Fev', 3:'Mar', 4:'Abr', 5:'Mai', 6:'Jun',
+                       7:'Jul', 8:'Ago', 9:'Set', 10:'Out', 11:'Nov', 12:'Dez'}
+        pivot_retorno = pivot_retorno.rename(columns=meses_nomes)
+        
+        def colorir_matrix_string(val):
+            if pd.isna(val) or val == "-": return 'color: #555555; text-align: center;' 
+            if str(val).strip().startswith('-'):
+                return 'background-color: rgba(255, 75, 75, 0.15); color: #ff4b4b; text-align: center; font-weight: bold;'
+            return 'background-color: rgba(57, 255, 20, 0.15); color: #39ff14; text-align: center; font-weight: bold;'
+
+        st.dataframe(pivot_retorno.style.map(colorir_matrix_string), use_container_width=True)
+        st.caption(f"Visualização atual: {modo_visao}")
+    else:
+        st.info("Aguardando dados para gerar a matriz.")
+
     # Histórico
     with st.expander("🛠️ Ver Histórico Completo (Livro-Razão)"):
         df_hist_view = df_trades.copy()
