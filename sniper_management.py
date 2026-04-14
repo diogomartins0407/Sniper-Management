@@ -9,7 +9,7 @@ from datetime import datetime
 st.set_page_config(page_title="Sniper Quant Dashboard", layout="wide")
 
 CAPITAL_INICIAL = 5000.0
-COTAS_INICIAIS = 50.0 
+COTAS_INICIAIS = 50.0
 
 # --- FUNÇÕES AUXILIARES ---
 @st.cache_data(ttl=300) # Cache para deixar o painel rápido
@@ -230,19 +230,25 @@ if not df_trades.empty:
     data_inicio_bench = df_chart['Data'].min()
     data_fim_bench = datetime.now()
 
-    # 1. IBOVESPA
+    # 1. IBOVESPA (COM CORREÇÃO DE FUSO HORÁRIO)
     try:
-        ibov_raw = yf.download("^BVSP", start=data_inicio_bench, end=data_fim_bench, interval="1d", progress=False)
-        ibov = ibov_raw['Close']
-        ibov_df = pd.DataFrame({'Data': ibov.index, 'IBOV': (ibov / ibov.iloc[0]) * 100})
+        ibov_hist = yf.Ticker("^BVSP").history(start=data_inicio_bench, end=data_fim_bench)
+        if not ibov_hist.empty:
+            ibov = ibov_hist['Close']
+            ibov_df = pd.DataFrame({'Data': ibov.index.tz_localize(None), 'IBOV': (ibov / ibov.iloc[0]) * 100})
+        else:
+            ibov_df = pd.DataFrame()
     except:
         ibov_df = pd.DataFrame()
 
-    # 2. S&P 500
+    # 2. S&P 500 (COM CORREÇÃO DE FUSO HORÁRIO)
     try:
-        sp500_raw = yf.download("^GSPC", start=data_inicio_bench, end=data_fim_bench, interval="1d", progress=False)
-        sp500 = sp500_raw['Close']
-        sp500_df = pd.DataFrame({'Data': sp500.index, 'SP500': (sp500 / sp500.iloc[0]) * 100})
+        sp500_hist = yf.Ticker("^GSPC").history(start=data_inicio_bench, end=data_fim_bench)
+        if not sp500_hist.empty:
+            sp500 = sp500_hist['Close']
+            sp500_df = pd.DataFrame({'Data': sp500.index.tz_localize(None), 'SP500': (sp500 / sp500.iloc[0]) * 100})
+        else:
+            sp500_df = pd.DataFrame()
     except:
         sp500_df = pd.DataFrame()
 
@@ -304,15 +310,11 @@ if not df_trades.empty:
             name='CDI'
         ))
 
-    # --- AJUSTE DE EIXO Y ---
-    # Descobre o ponto mais alto entre o Fundo e todos os Benchmarks para não cortar o gráfico
+    # --- AJUSTE DE EIXO Y E EIXO X (OMITIR FINAIS DE SEMANA) ---
     max_val = df_chart['Cota'].max()
     if not ibov_df.empty: max_val = max(max_val, ibov_df['IBOV'].max())
     if not sp500_df.empty: max_val = max(max_val, sp500_df['SP500'].max())
     if not cdi_df.empty: max_val = max(max_val, cdi_df['CDI'].max())
-
-    # --- AJUSTE DE EIXO Y E EIXO X (OMITIR FINAIS DE SEMANA) ---
-    max_val = max(df_chart['Cota'].max(), ibov_df['IBOV'].max() if not ibov_df.empty else 100)
     
     fig.update_layout(
         template="plotly_dark", 
@@ -348,7 +350,7 @@ if not df_trades.empty:
         )
     else: st.info("Nenhuma posição aberta.")
 
-# --- MATRIZ DE PERFORMANCE COM REVELAÇÃO PROGRESSIVA ---
+    # --- MATRIZ DE PERFORMANCE COM REVELAÇÃO PROGRESSIVA ---
     st.subheader("📊 Matriz de Performance")
     
     # 🔘 Seletor de Nível de Detalhe
@@ -410,3 +412,5 @@ if not df_trades.empty:
         df_hist_view['Resultado %'] = df_hist_view.apply(lambda x: (x['Resultado_R$'] / ((x['Preco']*x['Qtd']) - x['Resultado_R$'])) * 100 if x['Operacao'] == "Venda" and (x['Preco']*x['Qtd'] - x['Resultado_R$']) != 0 else 0, axis=1)
         
         st.dataframe(df_hist_view.style.format({"Preco": "R$ {:.2f}", "Resultado_R$": "R$ {:.2f}", "Resultado %": "{:.2f}%"}).map(colorir_lucro_prejuizo, subset=['Resultado_R$', 'Resultado %']), use_container_width=True)
+else:
+    st.info("Registre sua primeira compra para iniciar o fundo.")
