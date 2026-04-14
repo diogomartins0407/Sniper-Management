@@ -134,6 +134,7 @@ with st.sidebar.expander("💲 Atualizar Preço Manual", expanded=False):
 # --- PROCESSAMENTO ---
 df_trades = carregar_dados()
 st.title("📈 Sniper Quant | Gestão de Fundo")
+st.caption("Desenvolvido por Diogo Martins")
 
 posicoes_list = []
 if not df_trades.empty:
@@ -400,7 +401,7 @@ if not df_trades.empty:
         st.info("Aguardando dados para gerar a matriz.")
 
     # Histórico
-    with st.expander("🛠️ Ver Histórico Completo (Livro-Razão)"):
+    with st.expander("🛠️ Ver Histórico Completo"):
         df_hist_view = df_trades.copy()
         
         # Converte ID para número para evitar o bug de ordem alfabética
