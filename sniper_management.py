@@ -226,28 +226,55 @@ if not df_trades.empty:
         ponto_atual = pd.DataFrame({'Data': [ultimo_dia_util], 'Cota': [valor_cota]})
         df_chart = pd.concat([df_chart, ponto_atual], ignore_index=True)
 
-    # Download do IBOV
+    # --- DOWNLOAD DE BENCHMARKS ---
+    data_inicio_bench = df_chart['Data'].min()
+    data_fim_bench = datetime.now()
+
+    # 1. IBOVESPA
     try:
-        ibov_raw = yf.download("^BVSP", start=df_chart['Data'].min(), end=datetime.now(), interval="1d", progress=False)
+        ibov_raw = yf.download("^BVSP", start=data_inicio_bench, end=data_fim_bench, interval="1d", progress=False)
         ibov = ibov_raw['Close']
-        ibov_norm = (ibov / ibov.iloc[0]) * 100
-        ibov_df = ibov_norm.reset_index()
-        ibov_df.columns = ['Data', 'IBOV']
+        ibov_df = pd.DataFrame({'Data': ibov.index, 'IBOV': (ibov / ibov.iloc[0]) * 100})
     except:
         ibov_df = pd.DataFrame()
 
+    # 2. S&P 500
+    try:
+        sp500_raw = yf.download("^GSPC", start=data_inicio_bench, end=data_fim_bench, interval="1d", progress=False)
+        sp500 = sp500_raw['Close']
+        sp500_df = pd.DataFrame({'Data': sp500.index, 'SP500': (sp500 / sp500.iloc[0]) * 100})
+    except:
+        sp500_df = pd.DataFrame()
+
+    # 3. CDI (Direto do Banco Central do Brasil)
+    try:
+        # Formata datas para a API do BCB (DD/MM/AAAA)
+        d_inic_str = data_inicio_bench.strftime('%d/%m/%Y')
+        d_fim_str = data_fim_bench.strftime('%d/%m/%Y')
+        url_bcb = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.12/dados?formato=json&dataInicial={d_inic_str}&dataFinal={d_fim_str}"
+        
+        # Lê e calcula o juro composto acumulado do CDI
+        cdi_raw = pd.read_json(url_bcb)
+        cdi_raw['data'] = pd.to_datetime(cdi_raw['data'], format='%d/%m/%Y')
+        cdi_raw['valor'] = cdi_raw['valor'] / 100 # Converte de 0.01% para decimal
+        cdi_raw['CDI'] = (1 + cdi_raw['valor']).cumprod() * 100 # Base 100
+        cdi_df = cdi_raw[['data', 'CDI']].rename(columns={'data': 'Data'})
+    except:
+        cdi_df = pd.DataFrame()
+
+    # --- PLOTAGEM DO GRÁFICO ---
     fig = go.Figure()
 
-    # Linha do Fundo Sniper
+    # Linha do Fundo Sniper (Verde Limão)
     fig.add_trace(go.Scatter(
         x=df_chart['Data'], 
         y=df_chart['Cota'], 
         mode='lines+markers', 
-        line=dict(color='#39FF14', width=3), 
+        line=dict(color='#39FF14', width=4), 
         name='Cota Sniper'
     ))
     
-    # Linha do IBOVESPA
+    # Linha do IBOVESPA (Azul)
     if not ibov_df.empty:
         fig.add_trace(go.Scatter(
             x=ibov_df['Data'], 
@@ -256,6 +283,33 @@ if not df_trades.empty:
             line=dict(color='#58A6FF', width=2, dash='dash'), 
             name='IBOVESPA'
         ))
+
+    # Linha do S&P 500 (Laranja)
+    if not sp500_df.empty:
+        fig.add_trace(go.Scatter(
+            x=sp500_df['Data'], 
+            y=sp500_df['SP500'], 
+            mode='lines', 
+            line=dict(color='#FF9900', width=2, dash='dashdot'), 
+            name='S&P 500'
+        ))
+
+    # Linha do CDI (Branco/Cinza)
+    if not cdi_df.empty:
+        fig.add_trace(go.Scatter(
+            x=cdi_df['Data'], 
+            y=cdi_df['CDI'], 
+            mode='lines', 
+            line=dict(color='#CCCCCC', width=2, dash='dot'), 
+            name='CDI'
+        ))
+
+    # --- AJUSTE DE EIXO Y ---
+    # Descobre o ponto mais alto entre o Fundo e todos os Benchmarks para não cortar o gráfico
+    max_val = df_chart['Cota'].max()
+    if not ibov_df.empty: max_val = max(max_val, ibov_df['IBOV'].max())
+    if not sp500_df.empty: max_val = max(max_val, sp500_df['SP500'].max())
+    if not cdi_df.empty: max_val = max(max_val, cdi_df['CDI'].max())
 
     # --- AJUSTE DE EIXO Y E EIXO X (OMITIR FINAIS DE SEMANA) ---
     max_val = max(df_chart['Cota'].max(), ibov_df['IBOV'].max() if not ibov_df.empty else 100)
