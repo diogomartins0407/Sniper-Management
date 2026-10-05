@@ -618,7 +618,6 @@ kpis = "".join([
     _tile("L/P Realizado", fmt_brl(lucro_realizado), "pos" if lucro_realizado >= 0 else "neg"),
     _tile("Win Rate", f"{fmt_num(win_rate,1)}%", "", f"{wins}/{n_trades} trades"),
     _tile("Posições Abertas", str(len(posicoes_list)), "", f"{fmt_brl(lucro_latente)} latente"),
-    _tile("Drawdown Máx.", f"{fmt_num(max_dd,2)}%", "neg" if max_dd < 0 else ""),
 ])
 st.markdown(f"<div class='kpi-row'>{kpis}</div>", unsafe_allow_html=True)
 
@@ -634,6 +633,7 @@ with st.expander("⚙️ Métricas Quant", expanded=True):
               "pos" if r_multiplo >= 0 else "neg", f"risco médio {fmt_brl(risco_medio)}"),
         _tile("Melhor / Pior", f"{fmt_brl(melhor_trade)}", "pos", f"pior {fmt_brl(pior_trade)}"),
         _tile("Sequências", f"{streak_w}W / {streak_l}L", "", f"média {fmt_num(dias_medios,1)} dias/trade"),
+        _tile("Drawdown Máx.", f"{fmt_num(max_dd,2)}%", "neg" if max_dd < 0 else "", "maior queda da cota"),
     ])
     st.markdown(f"<div class='kpi-row' style='margin-bottom:0'>{quant}</div>", unsafe_allow_html=True)
 
