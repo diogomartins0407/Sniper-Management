@@ -124,11 +124,25 @@ code{ background:var(--panel) !important; color:var(--up) !important;
 st.markdown(TV_CSS, unsafe_allow_html=True)
 
 # ============================================================
-# CONFIGURACAO DO FUNDO (FASE 1)
+# CONFIGURACAO DO FUNDO
 # ============================================================
 CAPITAL_INICIAL = 5000.0
 COTAS_INICIAIS = 50.0
-URL_GOOGLE_SHEETS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSk4E78PHBBrCfP0_Ixd_GmhVBiN5dSgdR1dZU6mCXdbK28YPU4CvBut1CZxE9Q_1xLkJOGZe6xX13z/pub?gid=610498100&single=true&output=csv"
+
+# Planilha "Diário de Trade" — base comum das abas publicadas (CSV)
+PLANILHA_BASE = ("https://docs.google.com/spreadsheets/d/e/"
+                 "2PACX-1vSk4E78PHBBrCfP0_Ixd_GmhVBiN5dSgdR1dZU6mCXdbK28YPU4CvBut1CZxE9Q_1xLkJOGZe6xX13z/pub")
+GID_FASE1 = "610498100"          # aba 1 ("Diário de Trade")
+GID_FASE2 = "1751063052"                   # <<< COLE AQUI o gid da aba 2 ("Diário de Trade 2"). Ex.: "123456789"
+
+
+def _url_aba(gid):
+    """Monta a URL de CSV publicado de uma aba a partir do gid."""
+    return f"{PLANILHA_BASE}?gid={gid}&single=true&output=csv"
+
+
+# Compatibilidade: 1a aba (usada se nada mais for configurado)
+URL_GOOGLE_SHEETS = _url_aba(GID_FASE1)
 
 # Cores (iguais ao tema / validadas)
 C_UP, C_DOWN = "#16c88a", "#ea3943"
@@ -193,13 +207,19 @@ def carregar_dados(url_planilha, _versao_cache="v4_tv"):
                 else:
                     data_compra = pd.to_datetime(data_str, dayfirst=True, errors='coerce')
 
+                data_saida_str = str(row.iloc[13]).strip()
+                aberta = "/" not in data_saida_str
+                # Preço atual digitado na planilha (col "Final (R$)") p/ posição ABERTA.
+                # Em trade fechado, col 9 é o preço de saída (tratado abaixo), então só vale p/ aberta.
+                preco_plan = limpa_moeda(row.iloc[9]) if aberta else 0.0
+
                 trades_gs.append({
                     "ID": i, "Data": data_compra, "Ticker": ativo, "Operacao": "Compra",
                     "Preco": preco_compra, "Qtd": qtd, "Resultado_R$": 0.0, "IFR_Entrada": ifr,
-                    "Alvo": alvo_trade, "Risco": risco_trade, "Retorno_pct": 0.0, "DiasUteis": 0
+                    "Alvo": alvo_trade, "Risco": risco_trade, "Retorno_pct": 0.0, "DiasUteis": 0,
+                    "PrecoPlan": preco_plan
                 })
 
-                data_saida_str = str(row.iloc[13]).strip()
                 if "/" in data_saida_str:
                     preco_venda = limpa_moeda(row.iloc[9])
                     lucro = limpa_moeda(row.iloc[10])
@@ -448,15 +468,65 @@ with st.sidebar.expander("💲 Atualizar Preço Manual", expanded=False):
         st.session_state.precos_manuais[t_manual] = p_manual
         st.rerun()
 st.sidebar.markdown("---")
-st.sidebar.caption("Sniper Quant Terminal · Fase 1\nGráfico: TradingView lightweight-charts")
 
-# --- PROCESSAMENTO ---
-df_trades = carregar_dados(URL_GOOGLE_SHEETS)
+# --- PROCESSAMENTO (consolida as abas: Fase 1 + Fase 2) ---
+def carregar_todas_fases():
+    """Lê as abas configuradas e concatena, marcando a coluna 'Fase'."""
+    frames = []
+    d1 = carregar_dados(_url_aba(GID_FASE1))
+    if not d1.empty:
+        d1 = d1.copy()
+        d1["Fase"] = 1
+        frames.append(d1)
+    if GID_FASE2.strip():
+        d2 = carregar_dados(_url_aba(GID_FASE2))
+        if not d2.empty:
+            d2 = d2.copy()
+            d2["Fase"] = 2
+            # Afasta os IDs da Fase 2 para não colidir com os da Fase 1
+            d2["ID"] = pd.to_numeric(d2["ID"], errors="coerce").fillna(0).astype("int64") + 1_000_000
+            frames.append(d2)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
+df_full = carregar_todas_fases()
+
+if df_full.empty:
+    st.markdown("<div class='tv-head'><div class='tv-sym'><div class='tv-sym-name'>SNIPER QUANT "
+                "<span class='tv-badge'>SEM DADOS</span></div></div></div>", unsafe_allow_html=True)
+    st.warning("Nenhum trade foi lido da planilha. Clique em **🔄 Sincronizar Nuvem** ou verifique a URL/compartilhamento do Google Sheets.")
+    st.stop()
+
+# ===== Seletor de escopo: Acumulado / Fase 1 / Fase 2 =====
+fases_disp = sorted(int(f) for f in df_full["Fase"].unique())
+tem_fase2 = 2 in fases_disp
+
+opcoes_escopo = ["Acumulado (Total)"]
+if 1 in fases_disp:
+    opcoes_escopo.append("Fase 1")
+if tem_fase2:
+    opcoes_escopo.append("Fase 2")
+
+escopo = st.sidebar.radio("📂 Escopo", opcoes_escopo, index=0,
+                          help="Acumulado = soma das duas abas (seu track record real). "
+                               "Fase 1/2 isolam cada aba em base 100.")
+st.sidebar.markdown("---")
+st.sidebar.caption("Sniper Quant Terminal\nGráfico: TradingView lightweight-charts")
+
+if escopo == "Fase 1":
+    df_trades = df_full[df_full["Fase"] == 1].copy()
+    _fase_label = "FASE 1"
+elif escopo == "Fase 2":
+    df_trades = df_full[df_full["Fase"] == 2].copy()
+    _fase_label = "FASE 2"
+else:
+    df_trades = df_full.copy()
+    _fase_label = "ACUMULADO" if tem_fase2 else "FASE 1"
 
 if df_trades.empty:
-    st.markdown("<div class='tv-head'><div class='tv-sym'><div class='tv-sym-name'>SNIPER QUANT "
-                "<span class='tv-badge'>FASE 1</span></div></div></div>", unsafe_allow_html=True)
-    st.warning("Nenhum trade foi lido da planilha. Clique em **🔄 Sincronizar Nuvem** ou verifique a URL/compartilhamento do Google Sheets.")
+    st.warning("Nenhum trade no escopo selecionado.")
     st.stop()
 
 # ===== Posições em aberto (preço médio cronológico) =====
@@ -464,29 +534,43 @@ posicoes_list = []
 for ativo in df_trades['Ticker'].unique():
     trades_ativo = df_trades[df_trades['Ticker'] == ativo].sort_values(['Data', 'ID'])
     qtd_aberta, p_medio, teve_venda_parcial = 0, 0.0, False
+    preco_plan_aberto = 0.0  # preço digitado na planilha p/ o lote em aberto
     for _, row in trades_ativo.iterrows():
         if row['Operacao'] == 'Compra':
             nova_qtd, preco_compra = row['Qtd'], row['Preco']
             if (qtd_aberta + nova_qtd) > 0:
                 p_medio = ((p_medio * qtd_aberta) + (preco_compra * nova_qtd)) / (qtd_aberta + nova_qtd)
             qtd_aberta += nova_qtd
+            _pp = row.get('PrecoPlan', 0.0)
+            if pd.notna(_pp) and _pp > 0:
+                preco_plan_aberto = float(_pp)
         elif row['Operacao'] == 'Venda':
             qtd_aberta -= row['Qtd']
             teve_venda_parcial = True
             if qtd_aberta <= 0:
                 qtd_aberta, p_medio, teve_venda_parcial = 0, 0.0, False
+                preco_plan_aberto = 0.0
     if qtd_aberta > 0:
         status_parcial = "⚠️ PARCIAL" if teve_venda_parcial else "INTEGRAL"
-        preco_atual = obter_preco_atual(ativo)
+        # Prioridade do preço atual:
+        # 1) override manual na sidebar  2) preço da planilha (col Final)
+        # 3) cotação yfinance  4) fallback preço médio
         if ativo in st.session_state.precos_manuais:
-            preco_atual = st.session_state.precos_manuais[ativo]
-        if preco_atual is None:
-            preco_atual = p_medio
+            preco_atual, fonte = st.session_state.precos_manuais[ativo], "Manual"
+        elif preco_plan_aberto > 0:
+            preco_atual, fonte = preco_plan_aberto, "Planilha"
+        else:
+            cotacao = obter_preco_atual(ativo)
+            if cotacao is not None:
+                preco_atual, fonte = cotacao, "yfinance"
+            else:
+                preco_atual, fonte = p_medio, "P.Médio"
         lucro_r = (preco_atual - p_medio) * qtd_aberta
         lucro_p = ((preco_atual / p_medio) - 1) * 100 if p_medio > 0 else 0
         posicoes_list.append({
             "Ativo": ativo, "Status": status_parcial, "Qtd": qtd_aberta,
-            "P.Médio": p_medio, "Atual": preco_atual, "L/P R$": lucro_r, "L/P %": lucro_p
+            "P.Médio": p_medio, "Atual": preco_atual, "L/P R$": lucro_r, "L/P %": lucro_p,
+            "Fonte": fonte
         })
 
 # ===== Métricas principais =====
@@ -597,7 +681,7 @@ _arrow = "▲" if var_cota_pct >= 0 else "▼"
 st.markdown(f"""
 <div class="tv-head">
   <div class="tv-sym">
-    <div class="tv-sym-name">SNIPER QUANT <span class="tv-badge">FASE 1</span></div>
+    <div class="tv-sym-name">SNIPER QUANT <span class="tv-badge">{_fase_label}</span></div>
     <div class="tv-sym-sub">Cota Base 100 · {n_trades} trades fechados · desde {_dt_ini}</div>
   </div>
   <div class="tv-price">
